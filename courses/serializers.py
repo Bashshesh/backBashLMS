@@ -21,20 +21,61 @@ class LessonSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'description', 'lesson_type', 'order', 'status', 'blocks']
 
     def get_status(self, obj):
-        request = self.context.get('request')
-        if not request or not request.user.is_authenticated:
-            return 'locked'
 
-        # Ищем запись о прогрессе
+        request = self.context.get('request')
+        print(f"DEBUG: Lesson {obj.id}, User {self.context.get('request').user}")
+
+        if not request or not request.user.is_authenticated:
+            return 'BANANA' # 🍌
+
+        # 1. Если есть запись в прогрессе — верим ей
         progress = UserLessonProgress.objects.filter(user=request.user, lesson=obj).first()
+
+        if progress:
+            print(f"🔴 НАЙДЕН ПРОГРЕСС! Урок {obj.id}, Статус: {progress.status}")
+        else:
+            print(f"🟢 Прогресса нет для урока {obj.id}")
+
         if progress:
             return progress.status
 
-        # Если прогресса нет, но курс куплен -> первый урок обычно открыт, остальные закрыты?
-        # Или все открыты? Тут твоя бизнес-логика. Допустим, пока locked.
-        # Но если ты хочешь, чтобы при покупке все открывалось, то 'active'.
+        if progress:
+            return progress.status  # Вернет 'completed' только если реально прошел
+
+        # 2. Если записи НЕТ, значит урок точно НЕ 'completed'.
+        # Проверяем, куплен ли курс
         is_enrolled = Enrollment.objects.filter(user=request.user, course=obj.course).exists()
-        return 'active' if is_enrolled else 'locked'
+
+        if not is_enrolled:
+            return 'locked'
+
+        # 3. Курс куплен. Определяем, доступен ли урок.
+
+        # Это ПЕРВЫЙ урок курса?
+        # (Ищем урок с минимальным порядковым номером в этом курсе)
+        first_lesson = Lesson.objects.filter(course=obj.course).order_by('order', 'id').first()
+
+        if first_lesson and obj.id == first_lesson.id:
+            return 'active'  # Первый урок всегда открыт для ученика
+
+        # Это НЕ первый урок. Проверяем ПРЕДЫДУЩИЙ.
+        # Ищем ближайший урок с order меньше текущего
+        prev_lesson = Lesson.objects.filter(course=obj.course, order__lt=obj.order).order_by('-order').first()
+
+        if prev_lesson:
+            # Урок открыт ТОЛЬКО если предыдущий COMPLETED
+            prev_progress = UserLessonProgress.objects.filter(
+                user=request.user,
+                lesson=prev_lesson,
+                status='completed'
+            ).exists()
+
+            if prev_progress:
+                return 'active'
+
+        # Во всех остальных случаях
+        return 'locked'
+
 
 
 # --- 3. Сериалайзер Списка Курсов (ДЛЯ ВИДЖЕТА!) ---
