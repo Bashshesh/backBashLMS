@@ -56,11 +56,16 @@ class LessonViewSet(viewsets.ModelViewSet):
 
     # Тоже заменим IsAdminOrReadOnly на стандартное
     def get_permissions(self):
-        if self.action in ['list', 'retrieve', 'context']:
-            return [IsAuthenticated()] # Уроки видят только зарегистрированные
-        if self.action in ['complete', 'check_quiz']:
+        # 1. Открытые методы (сюда добавляем check_quiz)
+        if self.action in ['list', 'retrieve', 'context', 'check_quiz']: # <-- ДОБАВИЛ СЮДА
+            return [AllowAny()]
+
+        # 2. Закрытые методы (убрал отсюда check_quiz)
+        if self.action in ['complete']:
             return [IsAuthenticated()]
-        return [IsAdminUser()] # Создавать/удалять уроки может только админ
+
+        # 3. Админские методы
+        return [IsAdminUser()]
 
     def perform_create(self, serializer):
         # Достаем ID курса из URL и привязываем урок
@@ -98,7 +103,7 @@ class LessonViewSet(viewsets.ModelViewSet):
             "nextLesson": LessonSerializer(next_lesson, context={'request': request}).data if next_lesson else None,
         })
 
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    @action(detail=True, methods=["post"], permission_classes=[AllowAny])
     def check_quiz(self, request, course_pk=None, pk=None):
         lesson = self.get_object()
         user = request.user
@@ -127,16 +132,16 @@ class LessonViewSet(viewsets.ModelViewSet):
                 score += 1
 
         # 5. Сохраняем прогресс и оценку
-        progress, _ = UserLessonProgress.objects.update_or_create(
-            user=user,
-            lesson=lesson,
-            defaults={
-                'status': 'completed',
-                'completed_at': timezone.now()
-                # Если у тебя есть поле score в модели Progress, добавь его сюда:
-                # 'score': score
-            }
-        )
+        if request.user.is_authenticated:
+            progress, _ = UserLessonProgress.objects.update_or_create(
+                user=request.user,
+                lesson=lesson,
+                defaults={
+                    'status': 'completed',
+                    'completed_at': timezone.now()
+                }
+            )
+
 
         # Открываем следующий урок (как в методе complete)
         # ... (твоя логика открытия следующего урока) ...

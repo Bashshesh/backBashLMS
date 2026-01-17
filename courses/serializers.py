@@ -11,22 +11,50 @@ class LessonBlockSerializer(serializers.ModelSerializer):
 
 # --- 2. Сериалайзер для Урока ---
 class LessonSerializer(serializers.ModelSerializer):
-    blocks = LessonBlockSerializer(many=True, read_only=True)
+    # blocks делаем MethodField, чтобы вручную решать, отдавать их или нет
+    blocks = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
+
     # Убираем progress отсюда, так как процент прохождения урока - странная штука.
-    # Обычно процент нужен только КУРСУ. Урок либо сдан (100%), либо нет (0%).
 
     class Meta:
         model = Lesson
-        fields = ['id', 'title', 'description', 'lesson_type', 'order', 'status', 'blocks']
+        fields = ['id', 'title', 'description', 'lesson_type', 'order', 'status', 'blocks', 'is_demo']
+
+    def get_blocks(self, obj):
+        request = self.context.get('request')
+
+        # 1. Если это Демо-урок -> Отдаем блоки всегда (даже гостю)
+        if obj.is_demo:
+            return LessonBlockSerializer(obj.blocks.all(), many=True).data
+
+        # 2. Если пользователь не авторизован -> Скрываем блоки
+        if not request or not request.user.is_authenticated:
+            return []
+
+            # 3. Если авторизован, проверяем покупку курса
+        is_enrolled = Enrollment.objects.filter(user=request.user, course=obj.course).exists()
+
+        # Если купил -> отдаем, если нет -> скрываем
+        if is_enrolled:
+            return LessonBlockSerializer(obj.blocks.all(), many=True).data
+
+        return []
+
 
     def get_status(self, obj):
 
         request = self.context.get('request')
-        print(f"DEBUG: Lesson {obj.id}, User {self.context.get('request').user}")
+        if obj.is_demo:
+            # Если юзер авторизован, проверим, может он его уже прошел?
+            if request and request.user.is_authenticated:
+                progress = UserLessonProgress.objects.filter(user=request.user, lesson=obj).first()
+                if progress and progress.status == 'completed':
+                    return 'completed'
+            return 'active'
 
         if not request or not request.user.is_authenticated:
-            return 'BANANA' # 🍌
+            return 'locked'
 
         # 1. Если есть запись в прогрессе — верим ей
         progress = UserLessonProgress.objects.filter(user=request.user, lesson=obj).first()
@@ -38,9 +66,6 @@ class LessonSerializer(serializers.ModelSerializer):
 
         if progress:
             return progress.status
-
-        if progress:
-            return progress.status  # Вернет 'completed' только если реально прошел
 
         # 2. Если записи НЕТ, значит урок точно НЕ 'completed'.
         # Проверяем, куплен ли курс
@@ -54,26 +79,17 @@ class LessonSerializer(serializers.ModelSerializer):
         # Это ПЕРВЫЙ урок курса?
         # (Ищем урок с минимальным порядковым номером в этом курсе)
         first_lesson = Lesson.objects.filter(course=obj.course).order_by('order', 'id').first()
-
         if first_lesson and obj.id == first_lesson.id:
-            return 'active'  # Первый урок всегда открыт для ученика
+            return 'active'
 
-        # Это НЕ первый урок. Проверяем ПРЕДЫДУЩИЙ.
-        # Ищем ближайший урок с order меньше текущего
         prev_lesson = Lesson.objects.filter(course=obj.course, order__lt=obj.order).order_by('-order').first()
-
         if prev_lesson:
-            # Урок открыт ТОЛЬКО если предыдущий COMPLETED
             prev_progress = UserLessonProgress.objects.filter(
-                user=request.user,
-                lesson=prev_lesson,
-                status='completed'
+                user=request.user, lesson=prev_lesson, status='completed'
             ).exists()
-
             if prev_progress:
                 return 'active'
 
-        # Во всех остальных случаях
         return 'locked'
 
 

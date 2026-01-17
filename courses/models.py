@@ -30,6 +30,8 @@ class Lesson(models.Model):
 
     # Этот тип нужен ФРОНТЕНДУ, чтобы знать, какой шаблон конструктора открыть учителю
     lesson_type = models.CharField(max_length=20, choices=LESSON_TYPES, default='custom')
+    # ЕБАННЫЙ ДЕМО УРОК
+    is_demo = models.BooleanField(default=False, verbose_name="Демо-урок (доступен всем)")
 
     order = models.PositiveIntegerField(default=0)
     is_published = models.BooleanField(default=False)
